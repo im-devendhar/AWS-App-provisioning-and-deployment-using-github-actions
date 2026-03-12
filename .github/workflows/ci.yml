@@ -5,7 +5,7 @@ on:
 
 env:
   AWS_REGION:      ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY:  ${{ secrets.ECR_REPOSITORY }}
+  ECR_REPOSITORY:  ${{ secrets.ECR_REPOSITORY }}   # e.g., poc-repo
   ACCOUNT_ID:      ${{ secrets.AWS_ACCOUNT_ID }}
   CONTAINER_NAME:  myapp
   CONTAINER_PORT:  "8080"
@@ -35,7 +35,6 @@ jobs:
             sudo apt-get update -y
             sudo apt-get install -y docker.io
             sudo systemctl enable --now docker
-            # Allow runner user to use docker without sudo (may require runner restart once)
             sudo usermod -aG docker "$USER" || true
           else
             echo "Docker already installed"
@@ -43,7 +42,6 @@ jobs:
           fi
 
       - name: Build & Push Image to ECR
-        working-directory: app    # change/remove if your Dockerfile isn't in ./app
         run: |
           set -euxo pipefail
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
@@ -54,17 +52,20 @@ jobs:
           docker push "$IMAGE:latest"
 
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "TAG=$TAG"   >> $GITHUB_ENV
 
       - name: Run Container on this EC2
         run: |
           set -euxo pipefail
-
-          # ECR login (token lasts ~12 hours)
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
-          # Stop & remove any previous container
           docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-          # Prefer running the immutable SHA tag (safer)
+          # Prefer immutable SHA tag for safety
+          docker pull "$IMAGE:$TAG"
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            --restart unless-stopped \
+            -p ${HOST_PORT}:${CONTAINER_PORT} \
+            "$IMAGE:$TAG"
