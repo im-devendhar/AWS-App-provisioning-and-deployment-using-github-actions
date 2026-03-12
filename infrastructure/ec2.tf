@@ -6,7 +6,7 @@ resource "aws_instance" "example" {
   associate_public_ip_address = true    
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  key_name               = "prod.pem"   # For SSH
+  key_name               = "prod"   # For SSH
 
   tags = {
     Name = "HelloWorld"
