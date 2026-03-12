@@ -47,7 +47,13 @@ jobs:
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
           TAG="${GITHUB_SHA::7}"
 
-          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          
+          docker build \
+            -f app/Dockerfile \
+            -t "$IMAGE:$TAG" \
+            -t "$IMAGE:latest" \
+            app
+
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
 
