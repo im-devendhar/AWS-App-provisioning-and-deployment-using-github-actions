@@ -8,8 +8,8 @@ env:
   ECR_REPOSITORY:  ${{ secrets.ECR_REPOSITORY }}
   ACCOUNT_ID:      ${{ secrets.AWS_ACCOUNT_ID }}
   CONTAINER_NAME:  myapp
-  CONTAINER_PORT:  "8080"   # change if your app listens on a different port
-  HOST_PORT:       "80"     # public port to expose
+  CONTAINER_PORT:  "8080"
+  HOST_PORT:       "80"
 
 jobs:
   build-push-run:
@@ -31,14 +31,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-
           if ! command -v docker >/dev/null 2>&1; then
-            # Install Docker from Ubuntu repo (simple & stable). For Docker CE, use Docker’s official repo instead.
             sudo apt-get update -y
             sudo apt-get install -y docker.io
             sudo systemctl enable --now docker
-
-            # Allow current runner user to use docker without sudo
+            # Allow runner user to use docker without sudo (may require runner restart once)
             sudo usermod -aG docker "$USER" || true
           else
             echo "Docker already installed"
@@ -46,7 +43,7 @@ jobs:
           fi
 
       - name: Build & Push Image to ECR
-        working-directory: app
+        working-directory: app    # change/remove if your Dockerfile isn't in ./app
         run: |
           set -euxo pipefail
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
@@ -70,10 +67,4 @@ jobs:
           # Stop & remove any previous container
           docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-          # Pull & run (use :$TAG for deterministic rollouts)
-          docker pull "$IMAGE:latest"
-          docker run -d \
-            --name "$CONTAINER_NAME" \
-            --restart unless-stopped \
-            -p ${HOST_PORT}:${CONTAINER_PORT} \
-            "$IMAGE:latest"
+          # Prefer running the immutable SHA tag (safer)
