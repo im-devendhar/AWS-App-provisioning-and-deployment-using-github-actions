@@ -1,4 +1,4 @@
-name: Build & Deploy
+name: Build & Deploy (self-hosted EC2)
 
 on:
   push:
@@ -14,15 +14,17 @@ env:
   ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   CONTAINER_NAME: myapp
-  APP_PORT: "8080"
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag:   ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: AWS Auth (OIDC)
+      - name: Configure AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
@@ -31,54 +33,47 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - id: meta
+        name: Set image meta
+        run: |
+          echo "image=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build & Push (SHA only)
         run: |
-          set -euo pipefail
-          IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           TAG="${GITHUB_SHA::7}"
           docker build -t "$IMAGE:$TAG" app
           docker push "$IMAGE:$TAG"
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "TAG=$TAG"     >> $GITHUB_ENV
 
-      - name: Deploy to EC2 via SSM
+  deploy:
+    needs: build
+    # This runs on your EC2 self-hosted runner
+    runs-on: self-hosted
+
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      TAG:   ${{ needs.build.outputs.tag }}
+
+    steps:
+      - name: Login to ECR (via EC2 instance profile)
         run: |
-          set -euo pipefail
-          sudo apt-get update -y && sudo apt-get install -y jq
+          REGISTRY="${IMAGE%/*}"
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$REGISTRY"
 
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=app-ec2" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].InstanceId" --output text)
+      - name: Pull & Run
+        run: |
+          set -euxo pipefail
+          CN="${{ env.CONTAINER_NAME }}"
+          IMAGE="${{ env.IMAGE }}:${{ env.TAG }}"
 
-          [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ] || { echo "No running EC2 with tag Name=app-ec2"; exit 1; }
-
-          SCRIPT=$(cat << 'EOF'
-          REGION="${AWS_REGION}"
-          ACCOUNT_ID="${ACCOUNT_ID}"
-          REPO="${ECR_REPOSITORY}"
-          TAG="${TAG}"
-          CN="${CONTAINER_NAME}"
-          PORT="${APP_PORT}"
-
-          IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG"
-          REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
-
-          aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
           docker rm -f "$CN" || true
           docker pull "$IMAGE"
-          docker run -d --name "$CN" -p ${PORT}:80 --restart unless-stopped "$IMAGE"
-          EOF
-          )
 
-          PARAMS=$(printf '%s' "$SCRIPT" | jq -Rs '{commands:[.]}')
+          # Nginx listens on 80 inside the container
+          # Public EC2 SG should allow inbound 80
+          docker run -d --name "$CN" --restart unless-stopped -p 80:80 "$IMAGE"
 
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "$PARAMS" \
-            --query "Command.CommandId" --output text)
-
-          # Optional: wait and print basic output for quick visibility
-          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
-          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-            --query 'StandardOutputContent' --output text || true
+      - name: Show container
+        run: docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
