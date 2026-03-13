@@ -32,23 +32,26 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
+      - name: Build & Push (SHA tag only)
         run: |
+          set -euo pipefail
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
           TAG="${GITHUB_SHA::7}"
-          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" app
+          docker build -t "$IMAGE:$TAG" app
           docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           echo "TAG=$TAG"     >> $GITHUB_ENV
 
       - name: Deploy to EC2 via SSM
         run: |
-          sudo apt-get install -y jq
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y jq
 
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=app-ec2" "Name=instance-state-name,Values=running" \
             --query "Reservations[0].Instances[0].InstanceId" --output text)
+
+          [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ] || { echo "No running EC2 with tag Name=app-ec2"; exit 1; }
 
           SCRIPT=$(cat << 'EOF'
           REGION="${AWS_REGION}"
@@ -61,11 +64,10 @@ jobs:
           IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG"
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
 
-          aws ecr get-login-password --region "$REGION" \
-            | docker login --username AWS --password-stdin "$REGISTRY"
-
+          aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
           docker rm -f "$CN" || true
           docker pull "$IMAGE"
+          # Map host 8080 -> container 80 (change to -p ${PORT}:${PORT} if your app listens on 8080 internally)
           docker run -d --name "$CN" -p ${PORT}:80 --restart unless-stopped "$IMAGE"
           EOF
           )
