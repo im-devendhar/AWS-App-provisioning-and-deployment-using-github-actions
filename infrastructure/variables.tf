@@ -20,4 +20,10 @@ variable "private_subnet_1_cidr"{
 
 variable "private_subnet_2_cidr"{
     default = "10.0.4.0/24"
+
+}
+
+variable "ubuntu_release" {
+  type    = string
+  default = "24.04"
 }
