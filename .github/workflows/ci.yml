@@ -19,7 +19,6 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +31,7 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push (SHA tag only)
+      - name: Build & Push (SHA only)
         run: |
           set -euo pipefail
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
@@ -67,14 +66,19 @@ jobs:
           aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
           docker rm -f "$CN" || true
           docker pull "$IMAGE"
-          # Map host 8080 -> container 80 (change to -p ${PORT}:${PORT} if your app listens on 8080 internally)
           docker run -d --name "$CN" -p ${PORT}:80 --restart unless-stopped "$IMAGE"
           EOF
           )
 
           PARAMS=$(printf '%s' "$SCRIPT" | jq -Rs '{commands:[.]}')
 
-          aws ssm send-command \
+          CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters "$PARAMS"
+            --parameters "$PARAMS" \
+            --query "Command.CommandId" --output text)
+
+          # Optional: wait and print basic output for quick visibility
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' --output text || true
