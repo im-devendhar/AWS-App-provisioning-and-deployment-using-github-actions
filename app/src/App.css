@@ -1,0 +1,326 @@
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+ 
+body {
+  font-family: 'Arial', sans-serif;
+  background-color: #f9f9f9;
+  color: #333;
+}
+ 
+.page {
+  width: 330px;
+  margin: 32px auto;
+  padding: 20px;
+  background-color: #e0eaf1;
+  border-radius: 12px;
+  box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.1);
+
+}
+ 
+/* App Title */
+.app-title {
+  color: #2d4a22;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 25px;
+  font-size: 1.5em;
+  padding-top: 20px !important;
+}
+ 
+/* Header */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #2d4a22; /* Dark green */
+  color: #ffffff;
+  padding: 15px 20px;
+  border-radius: 10px;
+  box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.15);
+  margin-bottom: 20px;
+}
+ 
+header h1 {
+  font-size: 1.25em;
+  font-weight: bold;
+}
+ 
+header button {
+  background-color: #f5f5f5;
+  color: #2d4a22;
+  border: none;
+  padding: 10px 15px;
+  font-weight: bold;
+  border-radius: 5px;
+  cursor: pointer;
+}
+ 
+header button:hover {
+  background-color: #ffffff;
+  box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+}
+ 
+/* Login Page Layout */
+.login-page {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  background-image: url('https://images.unsplash.com/photo-1557682250-23528b62c213'); /* Replace with desired URL */
+  background-size: cover;
+  background-position: center;
+  padding: 50px;
+  border-radius: 12px;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.2);
+}
+ 
+.login-form {
+  flex: 1;
+  background-color: rgba(255, 255, 255, 0.9);
+  border: 1px solid #cccccc;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  align-items: center;
+}
+ 
+.login-form h6 {
+  color: #2d4a22;
+  margin-bottom: 10px;
+  font-size: 1.25em;
+  font-weight: 600;
+}
+ 
+/* Form Fields */
+.MuiTextField-root {
+  width: 90%;
+  margin-top: 10px;
+}
+ 
+.MuiOutlinedInput-root {
+  border-radius: 8px;
+  font-size: 14px;
+  padding: 10px;
+  background-color: #f5f5f5;
+}
+ 
+.MuiInputLabel-root {
+  color: #2d4a22;
+}
+ 
+.MuiOutlinedInput-root .MuiOutlinedInput-notchedOutline {
+  border-color: #d1d5db;
+}
+ 
+.MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+  border-color: #2d4a22;
+}
+ 
+.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+  border-color: #2d4a22;
+}
+ 
+/* Buttons */
+button, .MuiButton-root {
+  background-color: #ff6666; /* Light red */
+  color: #ffffff;
+  border: none;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 1em;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  width: 90%;
+  margin-bottom: 10px;
+}
+ 
+button:hover, .MuiButton-root:hover {
+  background-color: #cc4c4c; /* Darker red */
+}
+ 
+/* Outlined Button */
+button.outlined, .MuiButton-outlined {
+  background-color: transparent;
+  color: #2d4a22;
+  border: 1px solid #2d4a22;
+  width: 90%;
+}
+ 
+button.outlined:hover {
+  background-color: #2d4a22;
+  color: #ffffff;
+}
+ 
+/* Page Titles */
+h5, h6 {
+  color: #2d4a22;
+  margin-bottom: 15px;
+  font-weight: 600;
+}
+ 
+/* Donor & Recipient Forms */
+.donor-page, .recipient-page {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 10px;
+}
+ 
+/* Crowdfunding Textarea */
+.crowdfunding-textarea {
+  margin-top: 15px;
+  width: 90%;
+}
+ 
+textarea {
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  border: 1px solid #cccccc;
+  transition: border-color 0.3s;
+  background-color: #f5f5f5;
+}
+ 
+textarea:focus {
+  outline: none;
+  border-color: #2d4a22;
+}
+ 
+/* Additional Styling for Consistency */
+input, .MuiInputBase-root {
+  padding: 8px;
+  border-radius: 8px;
+}
+ 
+.MuiFormLabel-root.Mui-focused {
+  color: #2d4a22;
+}
+.input_create_account_div{
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
+.input_field_class{
+  width: 250px;
+  height: 35px;
+  margin-bottom: 10px;
+}
+.input_field_class_donor{
+  width: 290px;
+  height: 35px;
+  margin-bottom: 10px;
+}
+.buttonLogin{
+  margin-bottom: 10px !important;
+}
+.logout_button{
+    width: 45%;
+}
+/* src/FoodTable.css */
+.food-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.food-table th, .food-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+.food-table th {
+  background-color: #f2f2f2;
+  text-align: left;
+}
+
+.food-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.food-table tr:hover {
+  background-color: #ddd;
+}
+/* src/FeedbackDialog.css */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog-content {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 400px;
+  text-align: center;
+}
+
+.star-rating {
+  cursor: pointer;
+}
+
+.star {
+  font-size: 24px;
+  color: lightgray;
+}
+
+.star.filled {
+  color: gold;
+}
+
+.dialog-actions {
+  margin-top: 10px;
+}
+
+textarea {
+  max-width: 100%;
+  height: 60px;
+  margin: 10px 0;
+}
+.myBackground {
+  background-image: url('./components/EndHunger.jpg'); /* Update the path */
+  height: 100vh; /* Full height */
+  background-size: cover; /* Cover the entire area */
+  background-position: center; /* Center the image */
+}
+.donorbacground {
+  background-image: url('./components/DonorPage.jpg'); /* Update the path */
+  height: 100vh; /* Full height */
+  background-size: cover; /* Cover the entire area */
+  background-position: center; /* Center the image */
+  padding-top: 65px !important;
+}
+.myBackgroundCreateAccount {
+  background-image: url('./components/EndHunger.jpg'); /* Update the path */
+  height: 100vh; /* Full height */
+  background-size: cover; /* Cover the entire area */
+  background-position: center; /* Center the image */
+  padding-top: 65px !important;
+}
+.recepinetImageBackground {
+  background-image: url('./components/recepinetImage.png'); /* Update the path */
+  height: 100vh; /* Full height */
+  background-size: cover; /* Cover the entire area */
+  background-position: center; /* Center the image */
+  padding-top: 65px !important;
+}
+.CrowdFundBackground {
+  background-image: url('./components/CrowdFund.jpg'); /* Update the path */
+  height: 100vh; /* Full height */
+  background-size: cover; /* Cover the entire area */
+  background-position: center; /* Center the image */
+  padding-top: 65px !important;
+}
