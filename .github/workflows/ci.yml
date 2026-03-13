@@ -41,6 +41,7 @@ jobs:
 
       - name: Build & Push (SHA only)
         run: |
+          set -euo pipefail
           IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
           TAG="${GITHUB_SHA::7}"
           docker build -t "$IMAGE:$TAG" app
@@ -48,14 +49,103 @@ jobs:
 
   deploy:
     needs: build
-    # This runs on your EC2 self-hosted runner
-    runs-on: self-hosted
+    runs-on: self-hosted   # your EC2 runner
 
     env:
       IMAGE: ${{ needs.build.outputs.image }}
       TAG:   ${{ needs.build.outputs.tag }}
 
     steps:
+      - name: Ensure AWS CLI v2 is installed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if command -v aws >/dev/null 2>&1; then
+            echo "AWS CLI found: $(aws --version)"
+          else
+            echo "Installing AWS CLI v2..."
+            if [ -f /etc/os-release ]; then
+              . /etc/os-release
+              case "$ID" in
+                amzn|rhel|centos|rocky|almalinux|fedora)
+                  # Use official AWS CLI v2 installer
+                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                  unzip -q awscliv2.zip
+                  sudo ./aws/install || sudo ./aws/install --update
+                  rm -rf aws awscliv2.zip
+                  ;;
+                ubuntu|debian)
+                  # Official installer preferred; apt packages may be older
+                  sudo apt-get update -y
+                  sudo apt-get install -y unzip curl
+                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                  unzip -q awscliv2.zip
+                  sudo ./aws/install || sudo ./aws/install --update
+                  rm -rf aws awscliv2.zip
+                  ;;
+                *)
+                  echo "Unknown OS ($ID). Trying generic AWS CLI v2 installer..."
+                  sudo apt-get update -y || true
+                  sudo apt-get install -y unzip curl || true
+                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                  unzip -q awscliv2.zip
+                  sudo ./aws/install || sudo ./aws/install --update || true
+                  rm -rf aws awscliv2.zip || true
+                  ;;
+              esac
+            fi
+            aws --version
+          fi
+
+      - name: Ensure Docker is installed & running
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if command -v docker >/dev/null 2>&1; then
+            echo "Docker found: $(docker --version)"
+          else
+            echo "Installing Docker..."
+            if [ -f /etc/os-release ]; then
+              . /etc/os-release
+              case "$ID" in
+                amzn|rhel|centos|rocky|almalinux|fedora)
+                  if command -v dnf >/dev/null 2>&1; then
+                    sudo dnf -y update || true
+                    sudo dnf -y install docker
+                  else
+                    sudo yum -y update || true
+                    sudo yum -y install docker
+                  fi
+                  ;;
+                ubuntu|debian)
+                  sudo apt-get update -y
+                  sudo apt-get install -y docker.io
+                  ;;
+                *)
+                  echo "Unknown OS ($ID). Attempting generic install..."
+                  sudo apt-get update -y || true
+                  sudo apt-get install -y docker.io || true
+                  ;;
+              esac
+            fi
+          fi
+
+          # Enable/start Docker
+          if systemctl list-unit-files | grep -q docker.service; then
+            sudo systemctl enable --now docker
+          else
+            sudo service docker start || true
+          fi
+
+          # Add current runner user to docker group (applies next login; sudo kept as fallback)
+          if ! id -nG "$USER" | tr ' ' '\n' | grep -q '^docker$'; then
+            sudo usermod -aG docker "$USER" || true
+            echo "Added $USER to docker group (effective on next login)."
+          fi
+
+          # Smoke test
+          sudo -n docker ps >/dev/null 2>&1 || docker ps
+
       - name: Login to ECR (via EC2 instance profile)
         run: |
           REGISTRY="${IMAGE%/*}"
@@ -67,12 +157,9 @@ jobs:
           set -euxo pipefail
           CN="${{ env.CONTAINER_NAME }}"
           IMAGE="${{ env.IMAGE }}:${{ env.TAG }}"
-
           docker rm -f "$CN" || true
           docker pull "$IMAGE"
-
-          # Nginx listens on 80 inside the container
-          # Public EC2 SG should allow inbound 80
+          # Nginx listens on 80 in the container; expose 80 publicly
           docker run -d --name "$CN" --restart unless-stopped -p 80:80 "$IMAGE"
 
       - name: Show container
