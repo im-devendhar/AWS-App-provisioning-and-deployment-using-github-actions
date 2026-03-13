@@ -7,11 +7,14 @@ data "aws_ssm_parameter" "ubuntu_ami" {
   name = local.ubuntu_ssm_path
 }
 
-# IAM (unchanged)
 data "aws_iam_policy_document" "ec2_trust" {
   statement {
     actions = ["sts:AssumeRole"]
-    principals { type = "Service" identifiers = ["ec2.amazonaws.com"] }
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
   }
 }
 
@@ -73,3 +76,4 @@ resource "aws_instance" "app" {
     Name = "app-ec2-ubuntu"
   }
 }
+
