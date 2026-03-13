@@ -1,4 +1,4 @@
-name: Build & Deploy to EC2 (via SSM)
+name: Build & Deploy
 
 on:
   push:
@@ -17,14 +17,13 @@ env:
   APP_PORT: "8080"
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # OIDC authentication (NO static keys)
-      - name: Configure AWS Credentials
+      - name: AWS Auth (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
@@ -33,8 +32,7 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Build & push Docker image
-      - name: Build & Push
+      - name: Build & Push Image
         run: |
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
           TAG="${GITHUB_SHA::7}"
@@ -42,41 +40,39 @@ jobs:
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "TAG=$TAG"     >> $GITHUB_ENV
 
-      # DEPLOY TO EC2 via SSM
-      - name: Deploy to Private EC2 via SSM
+      - name: Deploy to EC2 via SSM
         run: |
-          # Find EC2 instance by Name tag
+          sudo apt-get install -y jq
+
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=app-ec2" "Name=instance-state-name,Values=running" \
             --query "Reservations[0].Instances[0].InstanceId" --output text)
 
-          DEPLOY_SCRIPT=$(cat << 'EOF'
-          #!/bin/bash
-          set -euxo pipefail
-          IMAGE="${IMAGE}"
-          TAG="${TAG}"
-          APP_PORT="${APP_PORT}"
-          CONTAINER_NAME="${CONTAINER_NAME}"
+          SCRIPT=$(cat << 'EOF'
           REGION="${AWS_REGION}"
+          ACCOUNT_ID="${ACCOUNT_ID}"
+          REPO="${ECR_REPOSITORY}"
+          TAG="${TAG}"
+          CN="${CONTAINER_NAME}"
+          PORT="${APP_PORT}"
 
-          # Authenticate EC2 to ECR
+          IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG"
+          REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+
           aws ecr get-login-password --region "$REGION" \
-            | docker login --username AWS --password-stdin "$IMAGE"
+            | docker login --username AWS --password-stdin "$REGISTRY"
 
-          docker rm -f "$CONTAINER_NAME" || true
-          docker pull "$IMAGE:$TAG"
-
-          docker run -d --name "$CONTAINER_NAME" \
-            -p ${APP_PORT}:${APP_PORT} \
-            --restart unless-stopped \
-            "$IMAGE:$TAG"
+          docker rm -f "$CN" || true
+          docker pull "$IMAGE"
+          docker run -d --name "$CN" -p ${PORT}:80 --restart unless-stopped "$IMAGE"
           EOF
           )
 
-         
+          PARAMS=$(printf '%s' "$SCRIPT" | jq -Rs '{commands:[.]}')
+
           aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="$DEPLOY_SCRIPT"
+            --parameters "$PARAMS"
