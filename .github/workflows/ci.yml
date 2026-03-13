@@ -1,8 +1,8 @@
-name: Build & Push to ECR + Deploy via SSM
+name: Build & Deploy to EC2 (via SSM)
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ env:
   ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   CONTAINER_NAME: myapp
-  CONTAINER_PORT: "8080"
+  APP_PORT: "8080"
 
 jobs:
   build-and-deploy:
@@ -23,59 +23,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-
-      - name: Configure AWS credentials
+      # OIDC authentication (NO static keys)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-ecr-ssm
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
+      # Build & push Docker image
+      - name: Build & Push
         run: |
-          set -euxo pipefail
           IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY"
           TAG="${GITHUB_SHA::7}"
-          docker build -f app/Dockerfile -t "$IMAGE:$TAG" -t "$IMAGE:latest" app
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" app
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "TAG=$TAG"     >> $GITHUB_ENV
+          echo "TAG=$TAG" >> $GITHUB_ENV
 
-    
-      - name: Deploy via SSM
+      # DEPLOY TO EC2 via SSM
+      - name: Deploy to Private EC2 via SSM
         run: |
-          set -euxo pipefail
+          # Find EC2 instance by Name tag
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=app-ec2" "Name=instance-state-name,Values=running" \
             --query "Reservations[0].Instances[0].InstanceId" --output text)
 
-          COMMAND=$(cat <<'EOS'
+          DEPLOY_SCRIPT=$(cat << 'EOF'
           #!/bin/bash
           set -euxo pipefail
-          REGION="${AWS_REGION}"
-          ACCOUNT_ID="${ACCOUNT_ID}"
-          REPO="${ECR_REPOSITORY}"
+          IMAGE="${IMAGE}"
           TAG="${TAG}"
+          APP_PORT="${APP_PORT}"
           CONTAINER_NAME="${CONTAINER_NAME}"
-          APP_PORT="${CONTAINER_PORT}"
+          REGION="${AWS_REGION}"
 
+          # Authenticate EC2 to ECR
           aws ecr get-login-password --region "$REGION" \
-            | docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+            | docker login --username AWS --password-stdin "$IMAGE"
 
           docker rm -f "$CONTAINER_NAME" || true
-          docker pull "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG"
-          docker run -d --name "$CONTAINER_NAME" --restart unless-stopped \
-            -p 8080:8080 \
-            "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG"
-          EOS
+          docker pull "$IMAGE:$TAG"
+
+          docker run -d --name "$CONTAINER_NAME" \
+            -p ${APP_PORT}:${APP_PORT} \
+            --restart unless-stopped \
+            "$IMAGE:$TAG"
+          EOF
           )
 
+         
           aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="$COMMAND" \
-            --comment "Deploy $TAG to $INSTANCE_ID" \
-            --query "Command.CommandId" --output text
+            --parameters commands="$DEPLOY_SCRIPT"
