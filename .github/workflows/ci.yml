@@ -17,11 +17,12 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted
+    runs-on: self-hosted   # your EC2 runner
 
     steps:
       - uses: actions/checkout@v4
 
+      # Ensure AWS CLI v2 is installed (Amazon Linux / Ubuntu compatible)
       - name: Ensure AWS CLI v2 is installed
         shell: bash
         run: |
@@ -34,6 +35,7 @@ jobs:
           fi
           aws --version
 
+      # Ensure Docker is installed and running
       - name: Ensure Docker is installed & running
         shell: bash
         run: |
@@ -50,21 +52,28 @@ jobs:
               sudo apt-get install -y docker.io
             fi
           fi
+
+          # Start docker
           if systemctl list-unit-files | grep -q docker.service; then
             sudo systemctl enable --now docker
           else
             sudo service docker start || true
           fi
-          # add for future sessions; current job still uses sudo
+
+          # Add current user to docker group for future sessions (current job still uses sudo)
           sudo usermod -aG docker "$USER" || true
+
+          # Smoke test (use sudo for this job)
           sudo docker ps >/dev/null
 
+      # Configure AWS credentials via OIDC (no long-lived keys)
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
           aws-region: ${{ env.AWS_REGION }}
 
+      # Login to ECR
       - name: Login to ECR
         shell: bash
         run: |
@@ -73,6 +82,7 @@ jobs:
           aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
             | sudo docker login --username AWS --password-stdin "$REGISTRY"
 
+      # Build & push image using a unique tag per run (immutable & re-run safe)
       - name: Build & Push (unique tag: SHA-RUN)
         shell: bash
         run: |
@@ -80,22 +90,28 @@ jobs:
           IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}"
           SHA="${GITHUB_SHA::7}"
           RUN="${GITHUB_RUN_NUMBER}"
-          TAG="${SHA}-${RUN}"   # immutable & re-run safe
+          TAG="${SHA}-${RUN}"   # e.g., 213fd35-47
+
           sudo docker build -t "$IMAGE:$TAG" app
           sudo docker push "$IMAGE:$TAG"
+
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           echo "TAG=$TAG"     >> $GITHUB_ENV
 
+      # Stop old container, pull new image, and run on port 80
       - name: Pull & Run
         shell: bash
         run: |
           set -euxo pipefail
           CN="${{ env.CONTAINER_NAME }}"
           IMAGE="${IMAGE}:${TAG}"
+
           sudo docker rm -f "$CN" || true
           sudo docker pull "$IMAGE"
+          # Your Dockerfile (nginx:alpine) listens on 80 inside the container
           sudo docker run -d --name "$CN" --restart unless-stopped -p 80:80 "$IMAGE"
 
+      # Optional local health check
       - name: Health check (local)
         shell: bash
         run: curl -fsS -o /dev/null http://localhost/ || (echo "Health check failed" && exit 1)
