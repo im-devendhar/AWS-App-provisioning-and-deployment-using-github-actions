@@ -17,36 +17,28 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted   # your EC2 runner
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
 
-      # --- Ensure AWS CLI v2 is present (Amazon Linux / Ubuntu) ---
       - name: Ensure AWS CLI v2 is installed
         shell: bash
         run: |
           set -euxo pipefail
-          if command -v aws >/dev/null 2>&1; then
-            echo "AWS CLI: $(aws --version)"
-          else
-            echo "Installing AWS CLI v2..."
+          if ! command -v aws >/dev/null 2>&1; then
             curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
             unzip -q awscliv2.zip
             sudo ./aws/install || sudo ./aws/install --update
             rm -rf aws awscliv2.zip
-            aws --version
           fi
+          aws --version
 
-      # --- Ensure Docker is present and running (Amazon Linux / Ubuntu) ---
       - name: Ensure Docker is installed & running
         shell: bash
         run: |
           set -euxo pipefail
-          if command -v docker >/dev/null 2>&1; then
-            echo "Docker: $(docker --version)"
-          else
-            echo "Installing Docker..."
+          if ! command -v docker >/dev/null 2>&1; then
             if command -v dnf >/dev/null 2>&1; then
               sudo dnf -y update || true
               sudo dnf -y install docker
@@ -58,29 +50,21 @@ jobs:
               sudo apt-get install -y docker.io
             fi
           fi
-          # Enable and start docker (works for both systemd/service environments)
           if systemctl list-unit-files | grep -q docker.service; then
             sudo systemctl enable --now docker
           else
             sudo service docker start || true
           fi
-          # Add runner user to docker group for future sessions (current job uses sudo)
+          # Add user for future sessions (this job still uses sudo)
           sudo usermod -aG docker "$USER" || true
-          # Smoke test with sudo (current session may not have new groups yet)
           sudo docker ps >/dev/null
 
-      # --- Buildx to avoid legacy builder deprecation and to speed up builds ---
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # --- OIDC auth to AWS (no long-lived keys) ---
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
           aws-region: ${{ env.AWS_REGION }}
 
-      # --- Login to ECR (use sudo docker; the runner service may need a restart for rootless) ---
       - name: Login to ECR
         shell: bash
         run: |
@@ -89,44 +73,32 @@ jobs:
           aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
             | sudo docker login --username AWS --password-stdin "$REGISTRY"
 
-      # --- Build & Push image with a UNIQUE tag per run (avoids immutable-tag conflicts) ---
-      - name: Build & Push (unique tag per run)
+      - name: Build & Push (unique tag: SHA-RUN)
         shell: bash
         run: |
           set -euo pipefail
           IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}"
           SHA="${GITHUB_SHA::7}"
           RUN="${GITHUB_RUN_NUMBER}"
-          TAG="${SHA}-${RUN}"   # e.g., 213fd35-47 (immutable & re-run safe)
-
-          sudo docker buildx build \
-            --tag "$IMAGE:$TAG" \
-            --file app/Dockerfile \
-            --push \
-            app
-
+          TAG="${SHA}-${RUN}"
+          sudo docker build -t "$IMAGE:$TAG" app
+          sudo docker push "$IMAGE:$TAG"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           echo "TAG=$TAG"     >> $GITHUB_ENV
 
-      # --- Stop old container, pull new image, run on port 80 ---
       - name: Pull & Run
         shell: bash
         run: |
           set -euxo pipefail
           CN="${{ env.CONTAINER_NAME }}"
           IMAGE="${IMAGE}:${TAG}"
-
           sudo docker rm -f "$CN" || true
           sudo docker pull "$IMAGE"
-          # Nginx in your Dockerfile listens on 80 inside the container
           sudo docker run -d --name "$CN" --restart unless-stopped -p 80:80 "$IMAGE"
 
-      # --- Optional: local health check ---
       - name: Health check (local)
         shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS -o /dev/null http://localhost/ || (echo "Health check failed" && exit 1)
+        run: curl -fsS -o /dev/null http://localhost/ || (echo "Health check failed" && exit 1)
 
       - name: Show container
         run: sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
