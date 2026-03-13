@@ -1,4 +1,4 @@
-name: Build & Deploy (self-hosted EC2)
+name: Build & Deploy (self-hosted EC2, single job)
 
 on:
   push:
@@ -16,84 +16,24 @@ env:
   CONTAINER_NAME: myapp
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
-      tag:   ${{ steps.meta.outputs.tag }}
+  build-and-deploy:
+    runs-on: self-hosted   # Amazon Linux EC2 runner
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - id: meta
-        name: Set image meta
-        run: |
-          echo "image=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
-          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
-      - name: Build & Push (SHA only)
-        run: |
-          set -euo pipefail
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
-          TAG="${GITHUB_SHA::7}"
-          docker build -t "$IMAGE:$TAG" app
-          docker push "$IMAGE:$TAG"
-
-  deploy:
-    needs: build
-    runs-on: self-hosted   # your EC2 runner
-
-    env:
-      IMAGE: ${{ needs.build.outputs.image }}
-      TAG:   ${{ needs.build.outputs.tag }}
-
-    steps:
       - name: Ensure AWS CLI v2 is installed
         shell: bash
         run: |
           set -euxo pipefail
           if command -v aws >/dev/null 2>&1; then
-            echo "AWS CLI found: $(aws --version)"
+            echo "AWS CLI: $(aws --version)"
           else
             echo "Installing AWS CLI v2..."
-            if [ -f /etc/os-release ]; then
-              . /etc/os-release
-              case "$ID" in
-                amzn|rhel|centos|rocky|almalinux|fedora)
-                  # Use official AWS CLI v2 installer
-                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                  unzip -q awscliv2.zip
-                  sudo ./aws/install || sudo ./aws/install --update
-                  rm -rf aws awscliv2.zip
-                  ;;
-                ubuntu|debian)
-                  # Official installer preferred; apt packages may be older
-                  sudo apt-get update -y
-                  sudo apt-get install -y unzip curl
-                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                  unzip -q awscliv2.zip
-                  sudo ./aws/install || sudo ./aws/install --update
-                  rm -rf aws awscliv2.zip
-                  ;;
-                *)
-                  echo "Unknown OS ($ID). Trying generic AWS CLI v2 installer..."
-                  sudo apt-get update -y || true
-                  sudo apt-get install -y unzip curl || true
-                  curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                  unzip -q awscliv2.zip
-                  sudo ./aws/install || sudo ./aws/install --update || true
-                  rm -rf aws awscliv2.zip || true
-                  ;;
-              esac
-            fi
+            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install || sudo ./aws/install --update
+            rm -rf aws awscliv2.zip
             aws --version
           fi
 
@@ -102,64 +42,58 @@ jobs:
         run: |
           set -euxo pipefail
           if command -v docker >/dev/null 2>&1; then
-            echo "Docker found: $(docker --version)"
+            echo "Docker: $(docker --version)"
           else
             echo "Installing Docker..."
-            if [ -f /etc/os-release ]; then
-              . /etc/os-release
-              case "$ID" in
-                amzn|rhel|centos|rocky|almalinux|fedora)
-                  if command -v dnf >/dev/null 2>&1; then
-                    sudo dnf -y update || true
-                    sudo dnf -y install docker
-                  else
-                    sudo yum -y update || true
-                    sudo yum -y install docker
-                  fi
-                  ;;
-                ubuntu|debian)
-                  sudo apt-get update -y
-                  sudo apt-get install -y docker.io
-                  ;;
-                *)
-                  echo "Unknown OS ($ID). Attempting generic install..."
-                  sudo apt-get update -y || true
-                  sudo apt-get install -y docker.io || true
-                  ;;
-              esac
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf -y update || true
+              sudo dnf -y install docker
+            else
+              sudo yum -y update || true
+              sudo yum -y install docker
             fi
           fi
-
-          # Enable/start Docker
           if systemctl list-unit-files | grep -q docker.service; then
             sudo systemctl enable --now docker
           else
             sudo service docker start || true
           fi
-
-          # Add current runner user to docker group (applies next login; sudo kept as fallback)
           if ! id -nG "$USER" | tr ' ' '\n' | grep -q '^docker$'; then
             sudo usermod -aG docker "$USER" || true
-            echo "Added $USER to docker group (effective on next login)."
+            echo "Added $USER to docker group (effective next login). Using sudo if required."
           fi
-
-          # Smoke test
           sudo -n docker ps >/dev/null 2>&1 || docker ps
 
-      - name: Login to ECR (via EC2 instance profile)
+      # Assume AWS role via OIDC to Build+Push to ECR
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
         run: |
-          REGISTRY="${IMAGE%/*}"
+          REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
           aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
             | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build & Push (SHA only)
+        run: |
+          set -euo pipefail
+          IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}"
+          TAG="${GITHUB_SHA::7}"
+          docker build -t "$IMAGE:$TAG" app
+          docker push "$IMAGE:$TAG"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "TAG=$TAG"     >> $GITHUB_ENV
 
       - name: Pull & Run
         run: |
           set -euxo pipefail
           CN="${{ env.CONTAINER_NAME }}"
-          IMAGE="${{ env.IMAGE }}:${{ env.TAG }}"
+          IMAGE="${IMAGE}:${TAG}"
           docker rm -f "$CN" || true
           docker pull "$IMAGE"
-          # Nginx listens on 80 in the container; expose 80 publicly
           docker run -d --name "$CN" --restart unless-stopped -p 80:80 "$IMAGE"
 
       - name: Show container
