@@ -55,7 +55,7 @@ jobs:
           else
             sudo service docker start || true
           fi
-          # Add user for future sessions (this job still uses sudo)
+          # add for future sessions; current job still uses sudo
           sudo usermod -aG docker "$USER" || true
           sudo docker ps >/dev/null
 
@@ -80,7 +80,7 @@ jobs:
           IMAGE="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}"
           SHA="${GITHUB_SHA::7}"
           RUN="${GITHUB_RUN_NUMBER}"
-          TAG="${SHA}-${RUN}"
+          TAG="${SHA}-${RUN}"   # immutable & re-run safe
           sudo docker build -t "$IMAGE:$TAG" app
           sudo docker push "$IMAGE:$TAG"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
