@@ -1,97 +1,74 @@
 name: Build & Deploy (self-hosted EC2, single job)
 
 on:
-push:
-branches: [main]
-workflow_dispatch:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-id-token: write
-contents: read
+  id-token: write
+  contents: read
 
 env:
-AWS_REGION:     ${{ secrets.AWS_REGION }}
-ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-CONTAINER_NAME: myapp
+  AWS_REGION:     ${{ secrets.AWS_REGION }}
+  ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  CONTAINER_NAME: myapp
 
 jobs:
-build-and-deploy:
-runs-on: self-hosted
+  build-and-deploy:
+    runs-on: self-hosted
 
-steps:
-  - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-  - name: Ensure AWS CLI v2 is installed
-    shell: bash
-    run: |
-      set -euxo pipefail
-      if ! command -v aws >/dev/null 2>&1; then
-        curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-        unzip -q awscliv2.zip
-        sudo ./aws/install || sudo ./aws/install --update
-        rm -rf aws awscliv2.zip
-      fi
-      aws --version
+      - name: Ensure AWS CLI v2 is installed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if ! command -v aws >/dev/null 2>&1; then
+            curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+            unzip -q awscliv2.zip
+            sudo ./aws/install || sudo ./aws/install --update
+            rm -rf aws awscliv2.zip
+          fi
+          aws --version
 
-  - name: Ensure Docker is installed & running
-    shell: bash
-    run: |
-      set -euxo pipefail
+      - name: Ensure Docker is installed & running
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf -y update || true
+              sudo dnf -y install docker
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum -y update || true
+              sudo yum -y install docker
+            else
+              sudo apt-get update -y
+              sudo apt-get install -y docker.io
+            fi
+          fi
+          if systemctl list-unit-files | grep -q docker.service; then
+            sudo systemctl enable --now docker
+          else
+            sudo service docker start || true
+          fi
+          # Add for future sessions (current job still uses sudo)
+          sudo usermod -aG docker "$USER" || true
+          # Smoke test
+          sudo docker ps >/dev/null
 
-      # Install Docker if not present (Ubuntu)
-      if ! command -v docker >/dev/null 2>&1; then
-        sudo apt-get update -y
-        sudo apt-get install -y docker.io
-      fi
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
+          aws-region: ${{ env.AWS_REGION }}
 
-      # Start and enable Docker service
-      sudo systemctl enable --now docker
-
-      # Add current user to docker group for future sessions
-      sudo usermod -aG docker "$USER" || true
-
-      # Smoke test
-      sudo docker ps >/dev/null
-
-  - name: Configure AWS credentials (OIDC)
-    uses: aws-actions/configure-aws-credentials@v4
-    with:
-      role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-oidc-role
-      aws-region: ${{ env.AWS_REGION }}
-
-  - name: Login to ECR
-    shell: bash
-    run: |
-      set -euo pipefail
-      REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-      aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
-        | sudo docker login --username AWS --password-stdin "$REGISTRY"
-
-  - name: Build Docker image
-    shell: bash
-    run: |
-      REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-      IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
-      sudo docker build -t "$IMAGE" .
-
-  - name: Push Docker image to ECR
-    shell: bash
-    run: |
-      REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-      IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
-      sudo docker push "$IMAGE"
-
-  - name: Deploy container
-    shell: bash
-    run: |
-      REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-      IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
-
-      sudo docker stop ${{ env.CONTAINER_NAME }} || true
-      sudo docker rm ${{ env.CONTAINER_NAME }} || true
-
-      sudo docker run -d \
-        --name ${{ env.CONTAINER_NAME }} \
-        -p 80:80 \
-        "$IMAGE"
+      - name: Login to ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          REGISTRY="${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
